@@ -4,7 +4,7 @@
 'use strict';
 
 function encode(inString) {
-	var inBytes = new Buffer(inString);
+	var inBytes = Buffer.isBuffer(inString) ? inString : new Buffer(inString);
 	var buffLen = inBytes.length;
 	var outBuffer = new Buffer(buffLen + buffLen / 3 + 1 + buffLen / 45 * 2 + 2 + 4);
 
