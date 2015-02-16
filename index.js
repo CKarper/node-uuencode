@@ -103,7 +103,7 @@ function decode(inString) {
 		retVal[i] = outBytes[i];
 	}
 
-	return retVal.toString();
+	return retVal;
 }
 	
 function encodeBytes(inBytes, offset, outBuffer, outIndex) {
