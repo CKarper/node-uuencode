@@ -58,54 +58,111 @@ function encode(inString) {
 	return outBuffer.toString().substring(0, outIndex);
 }
 
-function decode(inString) {
-	var curPos = 0;
-	var stop = false;
-	var totalLen = 0;
-	var byteOffset = 0;
+function decode(encoded) {
+	if (typeof(encoded) === 'undefined') { throw new Error('Required Argument: encoded - String or Buffer must be supplied'); }
 
-	var inBytes = new Buffer(inString);
-	var buffLen = inBytes.length;
-	var outBytes = new Buffer(buffLen);
+	var buf = null;
+	if (Buffer.isBuffer(encoded)) { buf = encoded; }
+	if (typeof(encoded) !== 'string') { throw new TypeError('Invalid Argument: encoded - Must be a String or Buffer'); }
+	else { buf = new Buffer(encoded); }
 
-	do {
-		if (curPos < buffLen) {
-			var n = inBytes[curPos] - 32 & 0x3F;
+	var bufLen = buf.length;
+	var outBuf = new Buffer(bufLen);
 
-			++curPos;
+	var skipLine = false,
+		currReadPos = 0,
+	    currWritePos = 0,
+	    currReadChar,
+	    chars = [],
+		lineLen = 0,
+		linePos = 0,
+		convPos = 0;
 
-			if (n > 45) {
-				throw 'Invalid Data';
-			}
-
-			if (n < 45) {
-				stop = true;
-			}
-
-			totalLen += n;
-
-			while (n > 0) {
-				decodeChars(inBytes, curPos, outBytes, byteOffset);
-				byteOffset += 3;
-				curPos += 4;
-				n -= 3;
-			}
-
-			++curPos;
-		} else {
-			stop = true;
+	while (currReadPos < bufLen) {
+		currReadChar = buf[currReadPos];
+		if (currReadChar === CHAR_CR || currReadChar == CHAR_LF) {
+			skipLine = false;
+			currReadPos++;
+			lineLen = 0;
+			linePos = 0;
+			continue;
 		}
-	} while (!stop);
+		if (skipLine) {
+			currReadPos++;
+			continue;
+		}
 
-	var retVal = new Buffer(totalLen);
+		// if 'begin' or 'end'
+		if ((currReadChar       === CHAR_B_LOWER &&
+			 buf[currReadPos+1] === CHAR_E_LOWER &&
+			 buf[currReadPos+2] === CHAR_G_LOWER &&
+			 buf[currReadPos+3] === CHAR_I_LOWER &&
+			 buf[currReadPos+4] === CHAR_N_LOWER) ||
+			(currReadChar       === CHAR_E_LOWER &&
+			 buf[currReadPos+1] === CHAR_N_LOWER &&
+			 buf[currReadPos+2] === CHAR_D_LOWER)) {
+			skipLine = true;
+			continue;
+		}
 
-	for (var i = 0; i < totalLen; i++) {
-		retVal[i] = outBytes[i];
+		lineLen = UUDECODE(currReadChar);
+		currReadPos++;
+
+		linePos = 0;
+		convPos = 0;
+
+		while (linePos < lineLen) {
+			if (currReadPos < bufLen) {
+				currReadChar = buf[currReadPos++];
+				if (currReadChar === CHAR_CR || currReadChar === CHAR_LF) {
+					throw new Error('Decode Error: invalid uuencoded data')
+				}
+			}
+			else {
+				currReadChar = CHAR_SPACE;
+			}
+
+			chars[convPos++] = UUDECODE(currReadChar);
+
+			if (convPos === 4) {
+				if (linePos < lineLen && currWritePos < bufLen) {
+					linePos++;
+					outBuf[currWritePos++] = ((chars[0] & 0x3F) << 2) | ((chars[1] & 0x3F) >> 4);
+				}
+				if (linePos < lineLen && currWritePos < bufLen) {
+					linePos++;
+					outBuf[currWritePos++] = ((chars[1] & 0x3F) << 4) | ((chars[2] & 0x3F) >> 2);
+				}
+				if (linePos < lineLen && currWritePos < bufLen) {
+					linePos++;
+					outBuf[currWritePos++] = ((chars[2] & 0x3F) << 6) | (chars[3] & 0x3F);
+				}
+				if (currWritePos >= bufLen && linePos < lineLen) {
+					throw new Error('Internal Error: decoded buffer is not large enough. Complain to the module author.');
+				}
+				convPos = 0;
+			}
+		}
 	}
 
-	return retVal;
+	return outBuf.slice(0, currWritePos);
 }
-	
+
+var CHAR_BACKTICK = '`'.charCodeAt(0);
+var CHAR_SPACE = ' '.charCodeAt(0);
+var CHAR_CR = '\r'.charCodeAt(0);
+var CHAR_LF = '\n'.charCodeAt(0);
+var CHAR_B_LOWER = 'b'.charCodeAt(0);
+var CHAR_D_LOWER = 'd'.charCodeAt(0);
+var CHAR_E_LOWER = 'e'.charCodeAt(0);
+var CHAR_G_LOWER = 'g'.charCodeAt(0);
+var CHAR_I_LOWER = 'i'.charCodeAt(0);
+var CHAR_N_LOWER = 'n'.charCodeAt(0);
+
+function UUDECODE(ch) {
+	return (ch === CHAR_BACKTICK ? '\0' : ((ch - CHAR_SPACE) & 0x3F));
+}
+
 function encodeBytes(inBytes, offset, outBuffer, outIndex) {
 	var c1 = inBytes[offset] >>> 2;
 	var c2 = inBytes[offset] << 4 & 0x30 | inBytes[offset + 1] >>> 4 & 0xF;
@@ -116,21 +173,6 @@ function encodeBytes(inBytes, offset, outBuffer, outIndex) {
 	outBuffer[outIndex + 1] = (c2 & 0x3F) + 32;
 	outBuffer[outIndex + 2] = (c3 & 0x3F) + 32;
 	outBuffer[outIndex + 3] = (c4 & 0x3F) + 32;
-}
-
-function decodeChars(inBytes, inOffset, outBytes, byteOffset) {
-	var c1 = inBytes[inOffset];
-	var c2 = inBytes[inOffset + 1];
-	var c3 = inBytes[inOffset + 2];
-	var c4 = inBytes[inOffset + 3];
-
-	var b1 = (c1 - 32 & 0x3F) << 2 | (c2 - 32 & 0x3F) >> 4;
-	var b2 = (c2 - 32 & 0x3F) << 4 | (c3 - 32 & 0x3F) >> 2;
-	var b3 = (c3 - 32 & 0x3F) << 6 | c4 - 32 & 0x3F;
-
-	outBytes[byteOffset] = b1;
-	outBytes[byteOffset + 1] = b2;
-	outBytes[byteOffset + 2] = b3;
 }
 
 exports.encode = encode;
